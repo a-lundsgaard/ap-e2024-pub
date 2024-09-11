@@ -4,7 +4,7 @@ module APL.AST
   )
 where
 
-import Control.Monad (ap, liftM)
+-- import Control.Monad (ap, liftM)
 
 type VName = String
 
