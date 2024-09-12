@@ -1,3 +1,4 @@
+{-# LANGUAGE InstanceSigs #-}
 module APL.Eval
   ( Val (..),
     eval,
@@ -45,6 +46,7 @@ instance Applicative EvalM where
   (<*>) = ap
 
 instance Monad EvalM where
+  (>>=) :: EvalM a -> (a -> EvalM b) -> EvalM b
   EvalM x >>= f = EvalM $ \env ->
     case x env of
       Left err -> Left err
@@ -59,13 +61,23 @@ runEval :: EvalM a -> Either Error a
 -- runEval = undefined -- TODO
 runEval (EvalM m) = m envEmpty
 
+-- evalIntBinOp :: Exp -> Exp -> (Integer -> Integer -> EvalM Integer) -> EvalM Val
+-- evalIntBinOp e1 e2 op = do
+--   x <- eval e1
+--   y <- eval e2
+--   case (x, y) of
+--     (ValInt i, ValInt j) -> do
+--       result <- op i j
+--       pure $ ValInt result
+--     _ -> failure "Non-integer operand"
+
 evalIntBinOp :: Exp -> Exp -> (Integer -> Integer -> EvalM Integer) -> EvalM Val
-evalIntBinOp e1 e2 op = do
-  x <- eval e1
-  y <- eval e2
+evalIntBinOp e1 e2 op =
+  eval e1 >>= \x ->
+  eval e2 >>= \y ->
   case (x, y) of
-    (ValInt i, ValInt j) -> do
-      result <- op i j
+    (ValInt i, ValInt j) -> 
+      op i j >>= \result ->
       pure $ ValInt result
     _ -> failure "Non-integer operand"
 

@@ -5,7 +5,7 @@ module APL.Eval
     runEval,
     Error,
   )
-where
+where n
 
 import APL.AST (Exp (..), VName)
 import Control.Monad (ap, liftM)
