@@ -25,6 +25,7 @@ import Control.Concurrent
     threadDelay,
     writeChan,
   )
+import Control.Exception (SomeException, catch)
 import Control.Monad (ap, forM_, forever, liftM, void)
 import Data.List (partition)
 import System.Clock.Seconds (Clock (Monotonic), Seconds, getTime)
@@ -66,14 +67,13 @@ data JobDoneReason
     Done
   | -- | The job was killed because it ran for too long.
     DoneTimeout
-  | -- | The job was explicitly cancelled, or the worker
-    -- it was running on was stopped.
+  | -- | The job was explicitly cancelled.
     DoneCancelled
   | -- | The job crashed due to an exception.
     DoneCrashed
   deriving (Eq, Ord, Show)
 
--- | The status of a running job.
+-- | The status of a job.
 data JobStatus
   = -- | The job is done and this is why.
     JobDone JobDoneReason
@@ -97,6 +97,8 @@ data SPCMsg
     MsgJobWait JobId (Chan JobDoneReason)
   | -- | Job has finished.
     MsgJobDone JobId
+  | -- | Job crashed.
+    MsgJobCrashed JobId
   | -- | Some time has passed.
     MsgTick
 
@@ -155,8 +157,13 @@ schedule = do
   case (spcJobRunning state, spcJobsPending state) of
     (Nothing, (jobid, job) : jobs) -> do
       t <- io $ forkIO $ do
-        void $ jobAction job
-        writeChan (spcChan state) $ MsgJobDone jobid
+        let doJob = do
+              jobAction job
+              writeChan (spcChan state) $ MsgJobDone jobid
+            onException :: SomeException -> IO ()
+            onException _ =
+              writeChan (spcChan state) $ MsgJobCrashed jobid
+        doJob `catch` onException
       now <- io $ getSeconds
       let deadline = now + fromIntegral (jobMaxSeconds job)
       put $
@@ -197,6 +204,65 @@ checkTimeouts = do
           jobDone jobid DoneTimeout
     _ -> pure ()
 
+handleMsg :: Chan SPCMsg -> SPCM ()
+handleMsg c = do
+  checkTimeouts
+  schedule
+  msg <- io $ readChan c
+  case msg of
+    MsgJobAdd job reply -> do
+      state <- get
+      let JobId jobid = spcJobCounter state
+      put $
+        state
+          { spcJobsPending =
+              (spcJobCounter state, job) : spcJobsPending state,
+            spcJobCounter = JobId $ succ jobid
+          }
+      io $ writeChan reply $ JobId jobid
+    MsgJobStatus jobid reply -> do
+      state <- get
+      io $ writeChan reply $ case ( lookup jobid $ spcJobsPending state,
+                                    spcJobRunning state,
+                                    lookup jobid $ spcJobsDone state
+                                  ) of
+        (Just _, _, _) -> JobPending
+        (_, Just (running_job, _, _), _)
+          | running_job == jobid ->
+              JobRunning
+        (_, _, Just r) -> JobDone r
+        _ -> JobUnknown
+    MsgJobWait jobid reply -> do
+      state <- get
+      case lookup jobid $ spcJobsDone state of
+        Just reason -> do
+          io $ writeChan reply reason
+        Nothing ->
+          put $ state {spcWaiting = (jobid, reply) : spcWaiting state}
+    MsgJobDone done_jobid -> do
+      state <- get
+      case spcJobRunning state of
+        Just (jobid, _, _)
+          | jobid == done_jobid ->
+              jobDone jobid Done
+        _ -> pure ()
+    MsgJobCancel cancel_jobid -> do
+      state <- get
+      case spcJobRunning state of
+        Just (jobid, _, tid) | jobid == cancel_jobid -> do
+          io $ killThread tid
+          jobDone jobid DoneCancelled
+        _ -> pure ()
+    MsgJobCrashed crashed_jobid -> do
+      state <- get
+      case spcJobRunning state of
+        Just (jobid, _, tid) | jobid == crashed_jobid -> do
+          io $ killThread tid
+          jobDone jobid DoneCrashed
+        _ -> pure ()
+    MsgTick ->
+      pure ()
+
 startSPC :: IO SPC
 startSPC = do
   c <- newChan
@@ -209,66 +275,13 @@ startSPC = do
             spcWaiting = [],
             spcChan = c
           }
-  void $ forkIO $ runSPCM initial_state $ forever $ handle c
-  void $ forkIO $ timerloop c
+  void $ forkIO $ runSPCM initial_state $ forever $ handleMsg c
+  void $ forkIO $ forever $ timer c
   pure $ SPC c
   where
-    timerloop c = do
+    timer c = do
       threadDelay 1000000 -- 1 second
       writeChan c MsgTick
-      timerloop c
-
-    handle :: Chan SPCMsg -> SPCM ()
-    handle c = do
-      checkTimeouts
-      schedule
-      msg <- io $ readChan c
-      case msg of
-        MsgJobAdd job reply -> do
-          state <- get
-          let JobId jobid = spcJobCounter state
-          put $
-            state
-              { spcJobsPending =
-                  (spcJobCounter state, job) : spcJobsPending state,
-                spcJobCounter = JobId $ succ jobid
-              }
-          io $ writeChan reply $ JobId jobid
-        MsgJobStatus jobid reply -> do
-          state <- get
-          io $ writeChan reply $ case ( lookup jobid $ spcJobsPending state,
-                                        spcJobRunning state,
-                                        lookup jobid $ spcJobsDone state
-                                      ) of
-            (Just _, _, _) -> JobPending
-            (_, Just (running_job, _, _), _)
-              | running_job == jobid ->
-                  JobRunning
-            (_, _, Just r) -> JobDone r
-            _ -> JobUnknown
-        MsgJobWait jobid reply -> do
-          state <- get
-          case lookup jobid $ spcJobsDone state of
-            Just reason -> do
-              io $ writeChan reply reason
-            Nothing ->
-              put $ state {spcWaiting = (jobid, reply) : spcWaiting state}
-        MsgJobDone done_jobid -> do
-          state <- get
-          case spcJobRunning state of
-            Just (jobid, _, _)
-              | jobid == done_jobid ->
-                  jobDone jobid Done
-            _ -> pure ()
-        MsgJobCancel cancel_jobid -> do
-          state <- get
-          case spcJobRunning state of
-            Just (jobid, _, tid) | jobid == cancel_jobid -> do
-              io $ killThread tid
-              jobDone jobid DoneCancelled
-            _ -> pure ()
-        MsgTick ->
-          pure ()
 
 -- | Add a job for scheduling.
 jobAdd :: SPC -> Job -> IO JobId
@@ -277,7 +290,7 @@ jobAdd (SPC c) job = do
   writeChan c $ MsgJobAdd job reply_chan
   readChan reply_chan
 
--- | Asynchronously query the job status.
+-- | Query the job status.
 jobStatus :: SPC -> JobId -> IO JobStatus
 jobStatus (SPC c) jobid = do
   reply_chan <- newChan
