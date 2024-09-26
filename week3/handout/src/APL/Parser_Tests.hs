@@ -1,4 +1,4 @@
-module APL.Parser_Tests (tests) where
+module APL.Parser_Tests (tests, parserTest, parserTests) where
 
 import APL.AST (Exp (..))
 import APL.Parser (parseAPL)
@@ -32,3 +32,16 @@ tests =
   testGroup
     "Parsing"
     []
+
+parserTests :: TestTree
+parserTests =
+  testGroup
+    "Parsing"
+    [ testGroup
+        "Constants"
+        [ parserTest "123" $ CstInt 123,
+          parserTest " 123" $ CstInt 123,
+          parserTest "123 " $ CstInt 123,
+          parserTestFail "123xyz"
+        ]
+    ]
