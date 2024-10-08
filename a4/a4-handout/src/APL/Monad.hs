@@ -9,11 +9,12 @@ module APL.Monad
     getState,
     putState,
     modifyState,
+    evalPrint,
+    catch,
+    failure,
     evalKvGet,
     evalKvPut,
-    evalPrint,
-    failure,
-    catch,
+    transaction,
     EvalM,
     Val (..),
     EvalOp (..),
@@ -56,8 +57,8 @@ data Free e a
   | Free (e (Free e a))
 
 instance (Functor e) => Functor (Free e) where
-  fmap f (Pure x) = Pure (f x)
-  fmap f (Free g) = Free (fmap (fmap f) g)  -- fmap :: Functor e => (a -> b) -> e a -> e b
+  fmap f (Pure x) = Pure $ f x
+  fmap f (Free g) = Free $ fmap (fmap f) g
 
 instance (Functor e) => Applicative (Free e) where
   pure = Pure
@@ -65,20 +66,9 @@ instance (Functor e) => Applicative (Free e) where
 
 instance (Functor e) => Monad (Free e) where
   Pure x >>= f = f x
-  Free g >>= f = Free (fmap (>>= f) g) -- fmap :: Functor e => (Free e a -> Free e b) -> e (Free e a) -> e (Free e b)
-  -- Free g >>= f = Free $ h <$> g
-  --   where
-  --     h x = x >>= f
-
-
-{- 
-  The code defines a GADT (Generalized Algebraic Data Type) named EvalOp 
-  with a single constructor ReadOp.
- -}
--- data EvalOp a where
---   ReadOp :: (Env -> a) -> EvalOp a
---   | StateGetOp (State -> a)
---   | StatePutOp State a
+  Free g >>= f = Free $ h <$> g
+    where
+      h x = x >>= f
 
 data EvalOp a
   = ReadOp (Env -> a)
@@ -88,12 +78,11 @@ data EvalOp a
   | ErrorOp Error
 
 instance Functor EvalOp where
-  -- fmap f (ReadOp k) = ReadOp (\env -> f (k env))
-  -- f . k means "apply k to the argument first, and then apply f to the result of k".
-  fmap f (ReadOp k) = ReadOp (f . k)
-  fmap f (StateGetOp k) = StateGetOp (\state -> f (k state))
-  fmap f (StatePutOp state k) = StatePutOp state (f k)
-  fmap f (PrintOp str k) = PrintOp str (f k)
+  fmap f (ReadOp k) = ReadOp $ f . k
+  fmap f (StateGetOp k) = StateGetOp $ f . k
+  fmap f (StatePutOp s m) = StatePutOp s $ f m
+  fmap f (PrintOp p m) = PrintOp p $ f m
+  fmap _ (ErrorOp e) = ErrorOp e
 
 type EvalM a = Free EvalOp a
 
@@ -111,10 +100,10 @@ localEnv f = modifyEffects g
     g op = op
 
 getState :: EvalM State
-getState = error "TODO"
+getState = Free $ StateGetOp $ \s -> pure s
 
 putState :: State -> EvalM ()
-putState = error "TODO"
+putState s = Free $ StatePutOp s $ pure ()
 
 modifyState :: (State -> State) -> EvalM ()
 modifyState f = do
@@ -122,16 +111,19 @@ modifyState f = do
   putState $ f s
 
 evalPrint :: String -> EvalM ()
-evalPrint = error "TODO"
+evalPrint p = Free $ PrintOp p $ pure ()
 
 failure :: String -> EvalM a
-failure s = Free $ ErrorOp s
+failure = Free . ErrorOp
 
 catch :: EvalM a -> EvalM a -> EvalM a
-catch = error "To be completed in assignment 4."
+catch = error "TODO"
 
 evalKvGet :: Val -> EvalM Val
-evalKvGet = error "To be completed in assignment 4."
+evalKvGet = error "TODO"
 
 evalKvPut :: Val -> Val -> EvalM ()
-evalKvPut = error "To be completed in assignment 4."
+evalKvPut = error "TODO"
+
+transaction :: EvalM () -> EvalM ()
+transaction = error "TODO"

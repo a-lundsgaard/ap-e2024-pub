@@ -150,3 +150,5 @@ eval (Apply e1 e2) = do
 eval (TryCatch e1 e2) = do
   catch (eval e1) (eval e2)
 
+-- eval (KvGet v) = do
+  

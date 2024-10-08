@@ -69,8 +69,5 @@ eval (Apply e1 e2) = do
       localEnv (const $ envExtend var arg f_env) $ eval body
     (_, _) ->
       failure "Cannot apply non-function"
-
-eval (KvGet e) = do
-  v <- eval e
-  evalKvGet v
--- eval (TryCatch e1 e2) =
+eval (TryCatch e1 e2) =
+  eval e1 `catch` eval e2

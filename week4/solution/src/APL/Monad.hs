@@ -1,3 +1,4 @@
+{-# LANGUAGE InstanceSigs #-}
 module APL.Monad
   ( envEmpty,
     envExtend,
@@ -61,9 +62,11 @@ instance (Functor e) => Functor (Free e) where
 
 instance (Functor e) => Applicative (Free e) where
   pure = Pure
+  (<*>) :: Functor e => Free e (a -> b) -> Free e a -> Free e b
   (<*>) = ap
 
 instance (Functor e) => Monad (Free e) where
+  (>>=) :: Functor e => Free e a -> (a -> Free e b) -> Free e b
   Pure x >>= f = f x
   Free g >>= f = Free $ h <$> g
     where
@@ -75,6 +78,9 @@ data EvalOp a
   | StatePutOp State a
   | PrintOp String a
   | ErrorOp Error
+  | TryCatchOp a a
+  | KvGetOp Val (Val -> a)
+  | KvPutOp Val Val a
 
 instance Functor EvalOp where
   fmap f (ReadOp k) = ReadOp $ f . k
@@ -82,6 +88,11 @@ instance Functor EvalOp where
   fmap f (StatePutOp s m) = StatePutOp s $ f m
   fmap f (PrintOp p m) = PrintOp p $ f m
   fmap _ (ErrorOp e) = ErrorOp e
+  fmap f (TryCatchOp m h) = TryCatchOp (f m) (f h)
+
+  -- fmap f (KvGetOp v k) = KvGetOp v $ f . k
+  fmap f (KvGetOp v k) = KvGetOp v (\x -> f (k x))
+  fmap f (KvPutOp v1 v2 m) = KvPutOp v1 v2 $ f m
 
 type EvalM a = Free EvalOp a
 
@@ -116,10 +127,10 @@ failure :: String -> EvalM a
 failure = Free . ErrorOp
 
 catch :: EvalM a -> EvalM a -> EvalM a
-catch = error "To be completed in assignment 4."
+catch m h = Free $ TryCatchOp m h
 
 evalKvGet :: Val -> EvalM Val
-evalKvGet = error "To be completed in assignment 4."
+evalKvGet v = Free $ KvGetOp v pure
 
 evalKvPut :: Val -> Val -> EvalM ()
-evalKvPut = error "To be completed in assignment 4."
+evalKvPut k v = Free $ KvPutOp k v (pure ())  
