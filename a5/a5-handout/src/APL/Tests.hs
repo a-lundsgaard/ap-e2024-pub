@@ -148,6 +148,7 @@ expCoverage e =
 
 parsePrinted :: Exp -> Bool
 parsePrinted e1 =
+  trace "Start parse" $
   trace ("Original expression: " ++ show e1) $
   case parseAPL "" (printExp e1) of
     Right e2 -> trace ("Parsed   expression: " ++ show e2) $ e1 == e2

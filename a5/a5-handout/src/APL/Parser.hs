@@ -15,7 +15,7 @@ import Text.Megaparsec
     parse,
     satisfy,
     some,
-    try,
+    try, optional, MonadParsec (lookAhead),
   )
 import Text.Megaparsec.Char (space)
 
@@ -46,9 +46,19 @@ lVName = lexeme $ try $ do
     then fail "Unexpected keyword"
     else pure v
 
+-- lInteger :: Parser Integer
+-- lInteger =
+--   lexeme $ read <$> some (satisfy isDigit) <* notFollowedBy (satisfy isAlphaNum)
+
 lInteger :: Parser Integer
-lInteger =
-  lexeme $ read <$> some (satisfy isDigit) <* notFollowedBy (satisfy isAlphaNum)
+lInteger = lexeme $ try $ do
+  sign <- optional (lString "-")
+  digits <- some (satisfy isDigit)
+  notFollowedBy (satisfy isAlphaNum)
+  let n = read digits
+  pure $ case sign of
+    Just _  -> -n
+    Nothing -> n
 
 lString :: String -> Parser ()
 lString s = lexeme $ void $ chunk s
