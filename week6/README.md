@@ -707,7 +707,17 @@ handleMsg c = do
 jobWait :: SPC -> JobId -> IO (Maybe JobDoneReason)
 jobWait (SPC c) jobid =
   requestReply c $ MsgJobWait jobid reply_chan
-
+  
+startSPC :: IO SPC
+startSPC = do
+  let initialState c =
+        SPCState
+         { ...
+         , spcChan = c
+         , spcJobRunning = Nothing
+         }
+  server <- spawn $ \c -> runSPCM (initialState c) $ forever $ handleMsg c
+  pure $ SPC server
 ```
 
 </details>
